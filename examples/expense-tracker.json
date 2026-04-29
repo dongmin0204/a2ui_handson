@@ -1,0 +1,95 @@
+{
+  "surface": {
+    "surfaceId": "expense-tracker",
+    "catalogId": "handson-basic-catalog",
+    "theme": { "primaryColor": "#f59e0b" }
+  },
+  "components": [
+    {
+      "id": "root",
+      "component": "Column",
+      "children": ["header", "summary_card", "expenses_card", "total_card", "actions"],
+      "gap": 16,
+      "align": "stretch"
+    },
+
+    { "id": "header", "component": "Row", "children": ["header_icon", "header_texts"], "align": "center", "gap": 12 },
+    { "id": "header_icon", "component": "Icon", "name": "💰", "size": 36 },
+    { "id": "header_texts", "component": "Column", "children": ["header_title", "header_sub"], "gap": 4 },
+    { "id": "header_title", "component": "Text", "text": { "path": "/title" }, "variant": "headline" },
+    { "id": "header_sub", "component": "Text", "text": { "path": "/subtitle" }, "variant": "body", "color": "secondary" },
+
+    { "id": "summary_card", "component": "Card", "child": "summary_inner" },
+    { "id": "summary_inner", "component": "Column", "children": ["summary_title", "summary_row"], "gap": 12 },
+    { "id": "summary_title", "component": "Text", "text": "📊 카테고리별 요약", "variant": "title" },
+    {
+      "id": "summary_row",
+      "component": "DataTable",
+      "columns": { "path": "/summary/columns" },
+      "rows": { "path": "/summary/rows" }
+    },
+
+    { "id": "expenses_card", "component": "Card", "child": "expenses_inner" },
+    { "id": "expenses_inner", "component": "Column", "children": ["expenses_title", "expenses_list"], "gap": 12 },
+    { "id": "expenses_title", "component": "Text", "text": "🧾 지출 목록", "variant": "title" },
+    {
+      "id": "expenses_list",
+      "component": "Column",
+      "children": { "path": "/expenses", "componentId": "expense_template" },
+      "gap": 8
+    },
+    {
+      "id": "expense_template",
+      "component": "Row",
+      "children": ["expense_check", "expense_name", "expense_amount"],
+      "align": "center",
+      "gap": 12
+    },
+    { "id": "expense_check", "component": "CheckBox", "value": { "path": "settled" } },
+    { "id": "expense_name", "component": "Text", "text": { "path": "name" }, "variant": "body" },
+    { "id": "expense_amount", "component": "Text", "text": { "path": "amount" }, "variant": "caption" },
+
+    { "id": "total_card", "component": "Card", "child": "total_inner" },
+    { "id": "total_inner", "component": "Row", "children": ["total_label", "total_value"], "align": "center", "gap": 12 },
+    { "id": "total_label", "component": "Text", "text": "💳 총 지출", "variant": "title" },
+    { "id": "total_value", "component": "Text", "text": { "path": "/totalAmount" }, "variant": "headline" },
+
+    { "id": "actions", "component": "Row", "children": ["btn_settle", "btn_analyze"], "gap": 12 },
+    {
+      "id": "btn_settle",
+      "component": "Button",
+      "label": "✅ 정산 완료 처리",
+      "variant": "primary",
+      "action": { "name": "complete_task" }
+    },
+    {
+      "id": "btn_analyze",
+      "component": "Button",
+      "label": "📈 지출 패턴 분석",
+      "variant": "secondary",
+      "action": { "name": "analyze_expenses" }
+    }
+  ],
+  "dataModel": {
+    "title": "이번 달 경비 트래커",
+    "subtitle": "AI가 정리한 지출 현황입니다",
+    "totalAmount": "₩ 342,000",
+    "summary": {
+      "columns": ["카테고리", "금액", "비율"],
+      "rows": [
+        ["식비", "₩ 120,000", "35%"],
+        ["교통", "₩ 52,000", "15%"],
+        ["쇼핑", "₩ 98,000", "29%"],
+        ["기타", "₩ 72,000", "21%"]
+      ]
+    },
+    "expenses": [
+      { "name": "점심 — 비빔밥", "amount": "₩ 9,000", "settled": false },
+      { "name": "지하철 월정액", "amount": "₩ 45,000", "settled": true },
+      { "name": "카페 아메리카노 × 3", "amount": "₩ 15,000", "settled": false },
+      { "name": "운동화 구입", "amount": "₩ 89,000", "settled": false },
+      { "name": "책 — 클린 아키텍처", "amount": "₩ 22,000", "settled": true },
+      { "name": "저녁 — 치킨", "amount": "₩ 23,000", "settled": false }
+    ]
+  }
+}

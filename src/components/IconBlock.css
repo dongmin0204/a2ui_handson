@@ -1,0 +1,12 @@
+.icon-block {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--color-text);
+}
+
+.icon-fallback {
+  color: var(--color-text-secondary);
+  font-family: monospace;
+}
