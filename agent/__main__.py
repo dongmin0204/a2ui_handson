@@ -210,6 +210,45 @@ def _data_model_update_message(parsed: dict, surface_id: str = "") -> dict | Non
     return {"dataModelUpdate": data_model_update}
 
 
+def _document_to_messages(parsed: dict) -> list[dict]:
+    surface = parsed.get("surface")
+    components = parsed.get("components")
+
+    if not isinstance(surface, dict) or not isinstance(components, list):
+        return []
+
+    surface_id = surface.get("surfaceId")
+    if not surface_id:
+        return []
+
+    messages: list[dict] = [
+        {
+            "beginRendering": {
+                "surfaceId": surface_id,
+                "surfaceType": surface.get("surfaceType", "materialDynamic"),
+            }
+        },
+        {
+            "surfaceUpdate": {
+                "surfaceId": surface_id,
+                "components": components,
+            }
+        },
+    ]
+
+    if isinstance(parsed.get("dataModel"), dict):
+        messages.append(
+            {
+                "dataModelUpdate": {
+                    "surfaceId": surface_id,
+                    "dataModel": parsed["dataModel"],
+                }
+            }
+        )
+
+    return messages
+
+
 def normalize_a2ui_messages(parsed: Any, surface_id: str = "") -> list[dict]:
     """
     Gemini 출력 형태가 조금 달라도 최종적으로 A2UI message array로 통일.
@@ -240,6 +279,10 @@ def normalize_a2ui_messages(parsed: Any, surface_id: str = "") -> list[dict]:
 
     # object wrapper인 경우
     if isinstance(parsed, dict):
+        document_messages = _document_to_messages(parsed)
+        if document_messages:
+            return document_messages
+
         # {"messages": [...]}
         if isinstance(parsed.get("messages"), list):
             return normalize_a2ui_messages(parsed["messages"], surface_id)
