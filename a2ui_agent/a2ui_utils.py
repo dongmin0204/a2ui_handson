@@ -18,9 +18,6 @@ def _wrap_a2ui_part(a2ui_message: dict) -> types.Part:
         "data": a2ui_message,
     }
 
-    # 중요:
-    # ensure_ascii=True로 두면 한글이 \uc6b4\ub3d9 형태로 들어가서
-    # 프론트에서 atob()만 써도 mojibake가 덜 발생함.
     datapart_json = json.dumps(
         payload,
         ensure_ascii=True,
@@ -36,7 +33,7 @@ def _wrap_a2ui_part(a2ui_message: dict) -> types.Part:
     return types.Part(
         inline_data=types.Blob(
             data=blob_data,
-            mime_type="text/plain; charset=utf-8",
+            mime_type="text/plain",
         )
     )
 
@@ -47,7 +44,6 @@ def _strip_markdown_fence(text: str) -> str:
     if not text.startswith("```"):
         return text
 
-    # ```json ... ``` / ``` ... ``` 모두 처리
     text = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", text)
     text = re.sub(r"\s*```$", "", text)
 
@@ -57,7 +53,6 @@ def _strip_markdown_fence(text: str) -> str:
 def _extract_json_region(text: str) -> str | None:
     text = text.strip()
 
-    # <a2ui-json>...</a2ui-json> 우선 처리
     tag_match = re.search(
         r"<a2ui-json>(.*?)</a2ui-json>",
         text,
@@ -66,7 +61,6 @@ def _extract_json_region(text: str) -> str | None:
     if tag_match:
         return tag_match.group(1).strip()
 
-    # 태그가 없으면 첫 JSON 시작점부터 사용
     for i, ch in enumerate(text):
         if ch in ("[", "{"):
             return text[i:].strip()
@@ -77,14 +71,12 @@ def _extract_json_region(text: str) -> str | None:
 def _parse_json_or_consecutive_objects(json_text: str):
     decoder = json.JSONDecoder()
 
-    # 1차: 정상 JSON
     try:
         parsed, _ = decoder.raw_decode(json_text)
         return parsed
     except json.JSONDecodeError:
         pass
 
-    # 2차: {"a":1} {"b":2} 같은 연속 JSON 객체 처리
     objects = []
     pos = 0
 
@@ -103,10 +95,7 @@ def _parse_json_or_consecutive_objects(json_text: str):
             logger.warning("Failed to parse A2UI JSON: %s", e)
             return None
 
-    if objects:
-        return objects
-
-    return None
+    return objects if objects else None
 
 
 def _extract_a2ui_messages(text: str) -> list[dict]:
@@ -133,16 +122,47 @@ def _extract_a2ui_messages(text: str) -> list[dict]:
     if not isinstance(parsed, list):
         return []
 
-    messages: list[dict] = []
+    return [
+        msg
+        for msg in parsed
+        if isinstance(msg, dict) and any(key in msg for key in A2UI_KEYS)
+    ]
 
-    for msg in parsed:
-        if not isinstance(msg, dict):
+
+def _ensure_begin_rendering(messages: list[dict]) -> list[dict]:
+    has_begin = any("beginRendering" in msg for msg in messages)
+
+    if has_begin:
+        return messages
+
+    surface_id = None
+    root_id = "root"
+
+    for msg in messages:
+        if "surfaceUpdate" not in msg:
             continue
 
-        if any(key in msg for key in A2UI_KEYS):
-            messages.append(msg)
+        surface_update = msg["surfaceUpdate"]
+        surface_id = surface_update.get("surfaceId")
 
-    return messages
+        components = surface_update.get("components", [])
+        if components and isinstance(components[0], dict):
+            root_id = components[0].get("id", "root")
+
+        break
+
+    if not surface_id:
+        return messages
+
+    return [
+        {
+            "beginRendering": {
+                "surfaceId": surface_id,
+                "root": root_id,
+            }
+        },
+        *messages,
+    ]
 
 
 def a2ui_callback(
@@ -152,7 +172,6 @@ def a2ui_callback(
     if not llm_response.content or not llm_response.content.parts:
         return None
 
-    # streaming 중간 조각은 건드리지 않음
     if llm_response.partial:
         return None
 
@@ -168,14 +187,14 @@ def a2ui_callback(
     if not messages:
         return None
 
-    logger.info("Extracted %d A2UI messages", len(messages))
+    messages = _ensure_begin_rendering(messages)
 
-    new_parts = [_wrap_a2ui_part(msg) for msg in messages]
+    logger.info("Extracted %d A2UI messages", len(messages))
 
     return LlmResponse(
         content=types.Content(
             role="model",
-            parts=new_parts,
+            parts=[_wrap_a2ui_part(msg) for msg in messages],
         ),
         partial=False,
         custom_metadata={"a2a:response": "true"},
