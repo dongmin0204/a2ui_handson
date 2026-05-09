@@ -48,19 +48,6 @@ def _wrap_a2ui_part(a2ui_message: dict) -> types.Part:
     return _wrap_a2ui_payload(_a2ui_envelope(a2ui_message))
 
 
-def _wrap_a2ui_parts(a2ui_messages: list[dict]) -> types.Part:
-    # ADK Web combines A2UI parts into one envelope whose data is a list of
-    # A2A DataPart envelopes. Returning that shape directly avoids final
-    # response paths that display individual inline_data parts as files.
-    payload = {
-        "kind": "data",
-        "metadata": {"mimeType": A2UI_MIME_TYPE},
-        "data": [_a2ui_envelope(msg) for msg in a2ui_messages],
-    }
-
-    return _wrap_a2ui_payload(payload)
-
-
 def _make_empty_partial() -> LlmResponse:
     return LlmResponse(
         content=types.Content(role="model", parts=[types.Part(text="")]),
@@ -266,12 +253,7 @@ def _extract_a2ui_messages(text: str) -> list[dict]:
     return messages
 
 
-def _ensure_begin_rendering(messages: list[dict]) -> list[dict]:
-    has_begin = any("beginRendering" in msg for msg in messages)
-
-    if has_begin:
-        return messages
-
+def _surface_update_defaults(messages: list[dict]) -> tuple[str | None, str]:
     surface_id = None
     root_id = "root"
 
@@ -288,6 +270,25 @@ def _ensure_begin_rendering(messages: list[dict]) -> list[dict]:
 
         break
 
+    return surface_id, root_id
+
+
+def _ensure_begin_rendering(messages: list[dict]) -> list[dict]:
+    surface_id, root_id = _surface_update_defaults(messages)
+    has_begin = any("beginRendering" in msg for msg in messages)
+
+    if has_begin:
+        for msg in messages:
+            begin_rendering = msg.get("beginRendering")
+            if not isinstance(begin_rendering, dict):
+                continue
+
+            begin_rendering.setdefault("surfaceType", "materialDynamic")
+            if root_id:
+                begin_rendering.setdefault("root", root_id)
+
+        return messages
+
     if not surface_id:
         return messages
 
@@ -295,6 +296,7 @@ def _ensure_begin_rendering(messages: list[dict]) -> list[dict]:
         {
             "beginRendering": {
                 "surfaceId": surface_id,
+                "surfaceType": "materialDynamic",
                 "root": root_id,
             }
         },
@@ -313,6 +315,7 @@ def _fallback_parse_error_messages() -> list[dict]:
         {
             "beginRendering": {
                 "surfaceId": surface_id,
+                "surfaceType": "materialDynamic",
                 "root": "root",
             }
         },
@@ -347,6 +350,40 @@ def _fallback_parse_error_messages() -> list[dict]:
     ]
 
 
+def _a2ui_message_summary(messages: list[dict]) -> list[dict]:
+    summary = []
+
+    for msg in messages:
+        if isinstance(msg.get("beginRendering"), dict):
+            begin_rendering = msg["beginRendering"]
+            summary.append(
+                {
+                    "beginRendering": {
+                        "surfaceId": begin_rendering.get("surfaceId"),
+                        "surfaceType": begin_rendering.get("surfaceType"),
+                        "root": begin_rendering.get("root"),
+                    }
+                }
+            )
+            continue
+
+        if isinstance(msg.get("surfaceUpdate"), dict):
+            surface_update = msg["surfaceUpdate"]
+            summary.append(
+                {
+                    "surfaceUpdate": {
+                        "surfaceId": surface_update.get("surfaceId"),
+                        "components": len(surface_update.get("components", [])),
+                    }
+                }
+            )
+            continue
+
+        summary.append({key: True for key in msg if key in A2UI_KEYS})
+
+    return summary
+
+
 def a2ui_callback(
     callback_context: CallbackContext,
     llm_response: LlmResponse,
@@ -376,11 +413,12 @@ def a2ui_callback(
     messages = _ensure_begin_rendering(messages)
 
     logger.info("Extracted %d A2UI messages", len(messages))
+    logger.info("A2UI outbound summary: %r", _a2ui_message_summary(messages))
 
     return LlmResponse(
         content=types.Content(
             role="model",
-            parts=[_wrap_a2ui_parts(messages)],
+            parts=[_wrap_a2ui_part(msg) for msg in messages],
         ),
         partial=False,
         custom_metadata={"a2a:response": "true"},
