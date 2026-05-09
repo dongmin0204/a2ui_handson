@@ -85,8 +85,15 @@ def _parse_json_or_consecutive_objects(json_text: str):
     try:
         parsed, _ = decoder.raw_decode(json_text)
         return parsed
-    except json.JSONDecodeError:
-        pass
+    except json.JSONDecodeError as e:
+        repaired = _repair_json_extra_closing_braces(json_text, e)
+        if repaired != json_text:
+            try:
+                parsed, _ = decoder.raw_decode(repaired)
+                logger.info("Repaired malformed A2UI JSON before parsing")
+                return parsed
+            except json.JSONDecodeError:
+                pass
 
     objects = []
     pos = 0
@@ -107,6 +114,31 @@ def _parse_json_or_consecutive_objects(json_text: str):
             return None
 
     return objects if objects else None
+
+
+def _repair_json_extra_closing_braces(json_text: str, error: json.JSONDecodeError) -> str:
+    """
+    모델이 컴포넌트 배열 끝에 닫는 중괄호를 하나 더 붙이는 케이스를 복구.
+    예: ... "usageHint": "body"}}}}] -> ... "usageHint": "body"}}}]
+    """
+
+    repaired = json_text
+
+    for _ in range(5):
+        pos = min(max(error.pos, 0), len(repaired) - 1)
+
+        if error.msg != "Expecting ',' delimiter" or repaired[pos] != "}":
+            return repaired
+
+        repaired = repaired[:pos] + repaired[pos + 1:]
+
+        try:
+            json.JSONDecoder().raw_decode(repaired)
+            return repaired
+        except json.JSONDecodeError as next_error:
+            error = next_error
+
+    return repaired
 
 
 def _append_a2ui_message(messages: list[dict], value) -> None:
@@ -251,6 +283,51 @@ def _ensure_begin_rendering(messages: list[dict]) -> list[dict]:
     ]
 
 
+def _looks_like_a2ui(text: str) -> bool:
+    return any(key in text for key in A2UI_KEYS)
+
+
+def _fallback_parse_error_messages() -> list[dict]:
+    surface_id = "a2ui_parse_error"
+
+    return [
+        {
+            "beginRendering": {
+                "surfaceId": surface_id,
+                "root": "root",
+            }
+        },
+        {
+            "surfaceUpdate": {
+                "surfaceId": surface_id,
+                "components": [
+                    {
+                        "id": "root",
+                        "component": {
+                            "Column": {
+                                "children": {
+                                    "explicitList": ["message"]
+                                }
+                            }
+                        },
+                    },
+                    {
+                        "id": "message",
+                        "component": {
+                            "Text": {
+                                "text": {
+                                    "literalString": "UI 응답을 파싱하지 못했습니다. 다시 요청해 주세요."
+                                },
+                                "usageHint": "body",
+                            }
+                        },
+                    },
+                ],
+            }
+        },
+    ]
+
+
 def a2ui_callback(
     callback_context: CallbackContext,
     llm_response: LlmResponse,
@@ -271,7 +348,11 @@ def a2ui_callback(
     messages = _extract_a2ui_messages(full_text)
 
     if not messages:
-        return None
+        if not _looks_like_a2ui(full_text):
+            return None
+
+        logger.warning("A2UI-looking response could not be parsed; returning fallback UI")
+        messages = _fallback_parse_error_messages()
 
     messages = _ensure_begin_rendering(messages)
 
