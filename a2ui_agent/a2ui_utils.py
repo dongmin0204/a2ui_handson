@@ -4,60 +4,29 @@ import re
 from google.genai import types
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.models.llm_response import LlmResponse
-from a2ui.parser.parser import parse_response, has_a2ui_parts
 
 logger = logging.getLogger(__name__)
 
 A2UI_MIME_TYPE = "application/json+a2ui"
-
-_A2UI_TAG_RE = re.compile(
-    r"(<a2ui-json>)(.*?)(</a2ui-json>)", re.DOTALL
-)
-
-
-def _fix_consecutive_json(text: str) -> str:
-    """Wrap consecutive JSON objects inside <a2ui-json> tags into an array."""
-
-    def _fix_match(m: re.Match) -> str:
-        open_tag, body, close_tag = m.group(1), m.group(2), m.group(3)
-        stripped = body.strip()
-
-        if stripped.startswith("["):
-            return m.group(0)
-
-        objects: list[str] = []
-        decoder = json.JSONDecoder()
-        pos = 0
-        while pos < len(stripped):
-            if stripped[pos] in " \t\r\n":
-                pos += 1
-                continue
-            try:
-                _obj, end = decoder.raw_decode(stripped, pos)
-                objects.append(stripped[pos : pos + end])
-                pos += end
-            except json.JSONDecodeError:
-                return m.group(0)
-
-        if len(objects) <= 1:
-            return m.group(0)
-
-        logger.info("Fixed %d consecutive JSON objects into array", len(objects))
-        return f"{open_tag}[{','.join(objects)}]{close_tag}"
-
-    return _A2UI_TAG_RE.sub(_fix_match, text)
+A2UI_KEYS = {"beginRendering", "surfaceUpdate", "dataModelUpdate", "deleteSurface"}
 
 
 def _wrap_a2ui_part(a2ui_message: dict) -> types.Part:
+    datapart_json = json.dumps(
+        {
+            "kind": "data",
+            "metadata": {"mimeType": A2UI_MIME_TYPE},
+            "data": a2ui_message,
+        },
+        ensure_ascii=False,
+    )
+
     blob_data = (
         b"<a2a_datapart_json>"
-        + json.dumps({
-            "kind": "data",
-            "data": a2ui_message,
-            "metadata": {"mimeType": A2UI_MIME_TYPE},
-        }).encode("utf-8")
+        + datapart_json.encode("utf-8")
         + b"</a2a_datapart_json>"
     )
+
     return types.Part(
         inline_data=types.Blob(
             data=blob_data,
@@ -66,11 +35,62 @@ def _wrap_a2ui_part(a2ui_message: dict) -> types.Part:
     )
 
 
-def _make_empty_partial() -> LlmResponse:
-    return LlmResponse(
-        content=types.Content(role="model", parts=[types.Part(text="")]),
-        partial=True,
+def _extract_a2ui_messages(text: str) -> list[dict]:
+    text = text.strip()
+
+    if not text:
+        return []
+
+    # markdown fence 제거
+    if text.startswith("```"):
+        text = text.split("\n", 1)[-1]
+        if text.endswith("```"):
+            text = text[:-3].strip()
+
+    # <a2ui-json> 태그가 있으면 내부만 사용
+    tag_match = re.search(
+        r"<a2ui-json>(.*?)</a2ui-json>",
+        text,
+        flags=re.DOTALL,
     )
+    if tag_match:
+        text = tag_match.group(1).strip()
+
+    # JSON 시작 위치 찾기
+    json_start = None
+    for i, ch in enumerate(text):
+        if ch in ("[", "{"):
+            json_start = i
+            break
+
+    if json_start is None:
+        return []
+
+    json_text = text[json_start:].strip()
+
+    # 1차: 정상 JSON 파싱
+    try:
+        parsed, _ = json.JSONDecoder().raw_decode(json_text)
+    except json.JSONDecodeError:
+        # 2차: 연속 JSON 객체 보정
+        try:
+            fixed = "[" + re.sub(r"}\s*{", "},{", json_text) + "]"
+            parsed, _ = json.JSONDecoder().raw_decode(fixed)
+        except json.JSONDecodeError as e:
+            logger.warning("Failed to parse A2UI JSON: %s", e)
+            return []
+
+    if isinstance(parsed, dict):
+        parsed = [parsed]
+
+    if not isinstance(parsed, list):
+        return []
+
+    return [
+        msg
+        for msg in parsed
+        if isinstance(msg, dict) and any(k in msg for k in A2UI_KEYS)
+    ]
 
 
 def a2ui_callback(
@@ -80,42 +100,26 @@ def a2ui_callback(
     if not llm_response.content or not llm_response.content.parts:
         return None
 
+    # 일단 partial은 건드리지 않는 쪽이 디버깅에 안전
     if llm_response.partial:
-        return _make_empty_partial()
-
-    full_text = ""
-    for part in llm_response.content.parts:
-        if part.text:
-            full_text += part.text
-
-    if not full_text.strip() or not has_a2ui_parts(full_text):
         return None
 
-    full_text = _fix_consecutive_json(full_text)
+    full_text = "".join(
+        part.text for part in llm_response.content.parts if part.text
+    )
 
-    try:
-        response_parts = parse_response(full_text)
-    except ValueError:
-        logger.warning("Failed to parse A2UI from LLM output")
+    messages = _extract_a2ui_messages(full_text)
+
+    if not messages:
         return None
 
-    new_parts: list[types.Part] = []
-    for rp in response_parts:
-        if rp.text:
-            new_parts.append(types.Part(text=rp.text))
-        if rp.a2ui_json:
-            data = rp.a2ui_json
-            if isinstance(data, list):
-                for msg in data:
-                    new_parts.append(_wrap_a2ui_part(msg))
-            else:
-                new_parts.append(_wrap_a2ui_part(data))
-
-    if not new_parts:
-        return None
+    logger.info("Extracted %d A2UI messages", len(messages))
 
     return LlmResponse(
-        content=types.Content(role="model", parts=new_parts),
+        content=types.Content(
+            role="model",
+            parts=[_wrap_a2ui_part(msg) for msg in messages],
+        ),
         partial=False,
         custom_metadata={"a2a:response": "true"},
     )
