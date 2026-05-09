@@ -4,15 +4,83 @@ import re
 from google.genai import types
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.models.llm_response import LlmResponse
+from a2ui.basic_catalog.provider import BasicCatalog
+from a2ui.schema.common_modifiers import remove_strict_validation
+from a2ui.schema.manager import A2uiSchemaManager
 
 logger = logging.getLogger(__name__)
 
 A2UI_MIME_TYPE = "application/json+a2ui"
 A2UI_KEYS = {"beginRendering", "surfaceUpdate", "dataModelUpdate", "deleteSurface"}
+A2UI_ALLOWED_ICONS = {
+    "accountCircle",
+    "add",
+    "arrowBack",
+    "arrowForward",
+    "attachFile",
+    "calendarToday",
+    "call",
+    "camera",
+    "check",
+    "close",
+    "delete",
+    "download",
+    "edit",
+    "event",
+    "error",
+    "favorite",
+    "favoriteOff",
+    "folder",
+    "help",
+    "home",
+    "info",
+    "locationOn",
+    "lock",
+    "lockOpen",
+    "mail",
+    "menu",
+    "moreVert",
+    "moreHoriz",
+    "notificationsOff",
+    "notifications",
+    "payment",
+    "person",
+    "phone",
+    "photo",
+    "print",
+    "refresh",
+    "search",
+    "send",
+    "settings",
+    "share",
+    "shoppingCart",
+    "star",
+    "starHalf",
+    "starOff",
+    "upload",
+    "visibility",
+    "visibilityOff",
+    "warning",
+}
+ICON_ALIASES = {
+    "restaurant": "shoppingCart",
+    "dumbbell": "check",
+    "book": "info",
+    "flight": "arrowForward",
+    "briefcase": "folder",
+    "check_circle": "check",
+    "check-circle": "check",
+    "calendar": "calendarToday",
+    "location": "locationOn",
+    "user": "person",
+    "cart": "shoppingCart",
+}
 A2A_DATAPART_RE = re.compile(
     r"<a2a_datapart_json>(.*?)</a2a_datapart_json>",
     flags=re.DOTALL,
 )
+
+_VALIDATOR = None
 
 
 def _a2ui_envelope(a2ui_message: dict) -> dict:
@@ -304,6 +372,128 @@ def _ensure_begin_rendering(messages: list[dict]) -> list[dict]:
     ]
 
 
+def _normalize_icon_name(name):
+    if isinstance(name, str):
+        literal = name
+    elif isinstance(name, dict):
+        literal = name.get("literalString")
+    else:
+        literal = None
+
+    if not literal:
+        return {"literalString": "info"}
+
+    normalized = ICON_ALIASES.get(literal, literal)
+    if normalized not in A2UI_ALLOWED_ICONS:
+        logger.warning("Unsupported A2UI icon %r replaced with 'info'", literal)
+        normalized = "info"
+
+    return {"literalString": normalized}
+
+
+def _normalize_component(component_entry: dict) -> None:
+    component = component_entry.get("component")
+    if not isinstance(component, dict) or len(component) != 1:
+        return
+
+    component_type = next(iter(component))
+    props = component[component_type]
+    if not isinstance(props, dict):
+        return
+
+    if component_type == "Icon":
+        props["name"] = _normalize_icon_name(props.get("name"))
+        return
+
+    if component_type == "Button":
+        props.setdefault(
+            "action",
+            {
+                "name": "buttonClick",
+                "context": [
+                    {
+                        "key": "componentId",
+                        "value": {
+                            "literalString": component_entry.get("id", "button")
+                        },
+                    }
+                ],
+            },
+        )
+        return
+
+    if component_type == "DatePicker":
+        component["DateTimeInput"] = {
+            "value": props.get("value", {"literalString": ""}),
+            "enableDate": True,
+            "enableTime": False,
+        }
+        del component["DatePicker"]
+
+
+def _escape_non_ascii_literal_strings(value) -> None:
+    if isinstance(value, list):
+        for item in value:
+            _escape_non_ascii_literal_strings(item)
+        return
+
+    if not isinstance(value, dict):
+        return
+
+    literal = value.get("literalString")
+    if isinstance(literal, str):
+        value["literalString"] = literal.encode(
+            "ascii",
+            "xmlcharrefreplace",
+        ).decode("ascii")
+
+    for child in value.values():
+        _escape_non_ascii_literal_strings(child)
+
+
+def _normalize_a2ui_messages(messages: list[dict]) -> list[dict]:
+    for msg in messages:
+        _escape_non_ascii_literal_strings(msg)
+
+        surface_update = msg.get("surfaceUpdate")
+        if not isinstance(surface_update, dict):
+            continue
+
+        components = surface_update.get("components")
+        if not isinstance(components, list):
+            continue
+
+        for component_entry in components:
+            if isinstance(component_entry, dict):
+                _normalize_component(component_entry)
+
+    return messages
+
+
+def _get_a2ui_validator():
+    global _VALIDATOR
+
+    if _VALIDATOR is None:
+        schema_manager = A2uiSchemaManager(
+            version="0.8",
+            catalogs=[BasicCatalog.get_config("0.8")],
+            schema_modifiers=[remove_strict_validation],
+        )
+        _VALIDATOR = schema_manager.get_selected_catalog().validator
+
+    return _VALIDATOR
+
+
+def _validate_a2ui_messages(messages: list[dict]) -> bool:
+    try:
+        _get_a2ui_validator().validate(messages)
+    except Exception as e:
+        logger.warning("A2UI schema validation failed: %s", e)
+        return False
+
+    return True
+
+
 def _looks_like_a2ui(text: str) -> bool:
     return any(key in text for key in A2UI_KEYS)
 
@@ -410,7 +600,10 @@ def a2ui_callback(
         logger.warning("A2UI-looking response could not be parsed; returning fallback UI")
         messages = _fallback_parse_error_messages()
 
-    messages = _ensure_begin_rendering(messages)
+    messages = _normalize_a2ui_messages(_ensure_begin_rendering(messages))
+
+    if not _validate_a2ui_messages(messages):
+        messages = _fallback_parse_error_messages()
 
     logger.info("Extracted %d A2UI messages", len(messages))
     logger.info("A2UI outbound summary: %r", _a2ui_message_summary(messages))
