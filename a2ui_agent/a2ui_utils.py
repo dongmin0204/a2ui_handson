@@ -9,6 +9,10 @@ logger = logging.getLogger(__name__)
 
 A2UI_MIME_TYPE = "application/json+a2ui"
 A2UI_KEYS = {"beginRendering", "surfaceUpdate", "dataModelUpdate", "deleteSurface"}
+A2A_DATAPART_RE = re.compile(
+    r"<a2a_datapart_json>(.*?)</a2a_datapart_json>",
+    flags=re.DOTALL,
+)
 
 
 def _wrap_a2ui_part(a2ui_message: dict) -> types.Part:
@@ -105,6 +109,35 @@ def _parse_json_or_consecutive_objects(json_text: str):
     return objects if objects else None
 
 
+def _append_a2ui_message(messages: list[dict], value) -> None:
+    value = _unwrap_a2ui_envelope(value)
+
+    if isinstance(value, list):
+        for item in value:
+            _append_a2ui_message(messages, item)
+        return
+
+    if isinstance(value, dict) and any(key in value for key in A2UI_KEYS):
+        messages.append(value)
+
+
+def _extract_a2a_datapart_messages(text: str) -> list[dict]:
+    messages: list[dict] = []
+
+    for match in A2A_DATAPART_RE.finditer(text):
+        json_text = match.group(1).strip()
+
+        try:
+            parsed = json.loads(json_text)
+        except json.JSONDecodeError as e:
+            logger.warning("Failed to parse A2A DataPart JSON: %s", e)
+            continue
+
+        _append_a2ui_message(messages, parsed)
+
+    return messages
+
+
 def _unwrap_a2ui_envelope(value):
     """
     A2A DataPart envelope 형태를 A2UI message로 벗겨냄.
@@ -151,6 +184,10 @@ def _extract_a2ui_messages(text: str) -> list[dict]:
     if not text:
         return []
 
+    datapart_messages = _extract_a2a_datapart_messages(text)
+    if datapart_messages:
+        return datapart_messages
+
     json_text = _extract_json_region(text)
 
     if not json_text:
@@ -174,13 +211,8 @@ def _extract_a2ui_messages(text: str) -> list[dict]:
     messages: list[dict] = []
 
     for msg in parsed:
-        msg = _unwrap_a2ui_envelope(msg)
-
-        if isinstance(msg, dict) and any(key in msg for key in A2UI_KEYS):
-            messages.append(msg)
-
+        _append_a2ui_message(messages, msg)
     return messages
-
 
 
 def _ensure_begin_rendering(messages: list[dict]) -> list[dict]:

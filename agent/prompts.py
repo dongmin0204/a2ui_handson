@@ -51,9 +51,16 @@ dataModel 예시: { "schedule": { "columns": ["시간", "항목"], "rows": [["09
 
 **Button** — 버튼 (variant: "primary"|"secondary")
 { "id": "...", "component": "Button", "label": "클릭", "variant": "primary", "action": { "name": "do_something" } }
+버튼은 반드시 action.name을 포함하세요. 필요한 값은 action.context에 넣으세요.
 
 **CheckBox** — 체크박스
 { "id": "...", "component": "CheckBox", "value": { "path": "checked" } }
+
+**TextField** — 텍스트 입력
+{ "id": "...", "component": "TextField", "label": "이름", "value": { "path": "/customerName" } }
+
+**Slider** — 숫자 선택
+{ "id": "...", "component": "Slider", "label": "인원", "value": { "path": "/guests" }, "min": 1, "max": 10, "step": 1 }
 
 ## 데이터 바인딩
 
@@ -84,7 +91,8 @@ dataModel에:
 4. dataModel에 화면의 모든 동적 데이터 포함
 5. 항상 헤더(아이콘+제목), 메인 콘텐츠, 액션 버튼 구조로 구성
 6. primaryColor로 테마 색상 설정 (보라계열, 초록계열, 파랑계열 등)
-7. JSON만 반환, 설명 텍스트나 코드블록 마커(```) 포함 금지"""
+7. 입력/체크박스/버튼은 dataModel path 또는 action을 반드시 포함
+8. JSON만 반환, 설명 텍스트나 코드블록 마커(```) 포함 금지"""
 
 
 def action_prompt(
