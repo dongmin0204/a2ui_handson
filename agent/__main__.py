@@ -9,7 +9,7 @@ import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import HTMLResponse, Response
 from google import genai
 from pydantic import BaseModel, Field
 
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 # .env 로드
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY", "")
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 PORT = int(os.environ.get("PORT", 3001))
 
@@ -37,6 +37,345 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+INTERACTIVE_HTML = r"""<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>A2UI Interactive</title>
+  <style>
+    :root { color-scheme: light; font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    body { margin: 0; background: #f7f7f8; color: #1f2937; }
+    .shell { display: grid; grid-template-columns: 360px 1fr; min-height: 100vh; }
+    .panel { border-right: 1px solid #e5e7eb; background: #fff; padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+    .panel h1 { font-size: 18px; margin: 0; }
+    textarea { min-height: 130px; resize: vertical; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; font: inherit; }
+    button { border: 0; border-radius: 8px; padding: 10px 12px; font: inherit; cursor: pointer; background: #2563eb; color: white; }
+    button.secondary { background: #e5e7eb; color: #111827; }
+    button:disabled { opacity: .6; cursor: wait; }
+    pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 12px; background: #111827; color: #d1d5db; border-radius: 8px; padding: 12px; max-height: 260px; overflow: auto; }
+    .canvas { padding: 28px; }
+    .surface { max-width: 920px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+    .col { display: flex; flex-direction: column; gap: 12px; }
+    .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .card { background: white; border: 1px solid #e5e7eb; border-radius: 8px; padding: 18px; box-shadow: 0 1px 2px rgb(0 0 0 / .04); }
+    .headline { font-size: 28px; font-weight: 750; margin: 0; }
+    .title { font-size: 20px; font-weight: 700; margin: 0; }
+    .body { font-size: 15px; margin: 0; }
+    .caption { font-size: 12px; color: #6b7280; margin: 0; }
+    label.field { display: grid; gap: 6px; font-size: 13px; color: #374151; }
+    input, select { border: 1px solid #d1d5db; border-radius: 8px; padding: 9px 10px; font: inherit; background: #fff; }
+    input[type="checkbox"] { width: 18px; height: 18px; }
+    table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; }
+    th, td { text-align: left; padding: 10px; border-bottom: 1px solid #e5e7eb; }
+    th { background: #f3f4f6; font-weight: 700; }
+    .empty { color: #6b7280; border: 1px dashed #cbd5e1; border-radius: 8px; padding: 24px; text-align: center; }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <aside class="panel">
+      <h1>A2UI Interactive</h1>
+      <textarea id="prompt">호텔 예약 UI를 만들어줘. 목적지, 체크인 날짜, 체크아웃 날짜, 인원, 객실 타입 입력과 검색 버튼을 포함해줘.</textarea>
+      <button id="generate">Generate</button>
+      <button id="reset" class="secondary">Reset State</button>
+      <pre id="log">ready</pre>
+    </aside>
+    <section class="canvas">
+      <div id="surface" class="surface"><div class="empty">Generate a UI to start.</div></div>
+    </section>
+  </main>
+  <script>
+    const app = {
+      surfaceId: "",
+      rootId: "root",
+      components: new Map(),
+      dataModel: {},
+      loading: false,
+    };
+
+    const surfaceEl = document.getElementById("surface");
+    const logEl = document.getElementById("log");
+    const generateBtn = document.getElementById("generate");
+    const promptEl = document.getElementById("prompt");
+
+    function log(value) {
+      logEl.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+    }
+
+    function setLoading(value) {
+      app.loading = value;
+      generateBtn.disabled = value;
+    }
+
+    function getPath(path, base) {
+      if (!path) return undefined;
+      const source = path.startsWith("/") ? app.dataModel : base;
+      const parts = path.replace(/^\//, "").split("/").filter(Boolean);
+      return parts.reduce((acc, part) => acc == null ? undefined : acc[part], source);
+    }
+
+    function setPath(path, value) {
+      if (!path || !path.startsWith("/")) return;
+      const parts = path.replace(/^\//, "").split("/").filter(Boolean);
+      let target = app.dataModel;
+      for (let i = 0; i < parts.length - 1; i++) {
+        target[parts[i]] ??= {};
+        target = target[parts[i]];
+      }
+      target[parts.at(-1)] = value;
+    }
+
+    function setRelativePath(base, path, value) {
+      if (!path || path.startsWith("/") || base == null || typeof base !== "object") return;
+      const parts = path.split("/").filter(Boolean);
+      let target = base;
+      for (let i = 0; i < parts.length - 1; i++) {
+        target[parts[i]] ??= {};
+        target = target[parts[i]];
+      }
+      target[parts.at(-1)] = value;
+    }
+
+    function valueOf(value, base) {
+      if (value == null) return "";
+      if (typeof value !== "object") return value;
+      if ("path" in value) return getPath(value.path, base);
+      if ("literalString" in value) return value.literalString;
+      if ("literalBoolean" in value) return value.literalBoolean;
+      if ("literalNumber" in value) return value.literalNumber;
+      return "";
+    }
+
+    function childrenOf(component) {
+      const children = component.children;
+      if (Array.isArray(children)) return children;
+      if (children?.explicitList) return children.explicitList;
+      return [];
+    }
+
+    function componentDef(id) {
+      return app.components.get(id);
+    }
+
+    function normalizeComponent(def) {
+      const raw = def.component;
+      if (typeof raw === "string") return { type: raw, props: def };
+      const [[type, props]] = Object.entries(raw || {});
+      return { type, props: { ...props, id: def.id } };
+    }
+
+    function labelText(props, fallback = "") {
+      return valueOf(props.label, {}) || props.label || props.placeholder || fallback;
+    }
+
+    async function sendAction(action, context = {}, event = {}, stateChange = {}) {
+      setLoading(true);
+      try {
+        const res = await fetch("/api/action", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action,
+            context,
+            event,
+            stateChange,
+            surfaceId: app.surfaceId,
+            currentDataModel: app.dataModel,
+          }),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        const messages = await res.json();
+        log({ action, context, stateChange, response: messages });
+        applyMessages(messages);
+      } catch (err) {
+        log(String(err));
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    function actionInfo(action) {
+      if (!action) return null;
+      if (action.event) return { name: action.event.name, context: action.event.context || {} };
+      return { name: action.name, context: action.context || {} };
+    }
+
+    function renderNode(id, base = app.dataModel) {
+      const def = componentDef(id);
+      if (!def) return document.createComment(`missing ${id}`);
+      const { type, props } = normalizeComponent(def);
+
+      if (type === "Column" || type === "Row") {
+        const el = document.createElement("div");
+        el.className = type === "Column" ? "col" : "row";
+        if (props.children?.path && props.children?.componentId) {
+          const items = getPath(props.children.path, base) || [];
+          items.forEach(item => el.append(renderNode(props.children.componentId, item)));
+        } else {
+          for (const childId of childrenOf(props)) el.append(renderNode(childId, base));
+        }
+        return el;
+      }
+
+      if (type === "Card") {
+        const el = document.createElement("div");
+        el.className = "card";
+        el.append(renderNode(props.child, base));
+        return el;
+      }
+
+      if (type === "Text") {
+        const el = document.createElement("p");
+        const variant = props.variant || props.usageHint || "body";
+        el.className = variant === "headline" || variant === "h1" ? "headline" : variant === "title" || variant === "h3" ? "title" : variant === "caption" ? "caption" : "body";
+        el.textContent = valueOf(props.text, base);
+        return el;
+      }
+
+      if (type === "Icon") {
+        const el = document.createElement("span");
+        el.textContent = props.name || "";
+        return el;
+      }
+
+      if (type === "Divider") return document.createElement("hr");
+
+      if (type === "Button") {
+        const el = document.createElement("button");
+        if (props.child && componentDef(props.child)) {
+          el.append(renderNode(props.child, base));
+        } else {
+          el.textContent = props.label || props.text || "Run";
+        }
+        const action = actionInfo(props.action);
+        el.addEventListener("click", () => {
+          if (!action) return;
+          sendAction(action.name, action.context, { type: "click", componentId: id }, {});
+        });
+        return el;
+      }
+
+      if (type === "CheckBox") {
+        const path = props.value?.path;
+        const wrapper = document.createElement("label");
+        wrapper.className = "row";
+        const input = document.createElement("input");
+        input.type = "checkbox";
+        input.checked = Boolean(valueOf(props.value, base));
+        const text = document.createElement("span");
+        text.textContent = labelText(props, id);
+        input.addEventListener("change", () => {
+          if (path?.startsWith("/")) setPath(path, input.checked);
+          else setRelativePath(base, path, input.checked);
+          sendAction("checkbox_changed", { componentId: id, path }, { type: "change", componentId: id }, { path, value: input.checked });
+        });
+        wrapper.append(input, text);
+        return wrapper;
+      }
+
+      if (type === "TextField" || type === "DatePicker" || type === "Slider") {
+        const path = props.value?.path || props.text?.path;
+        const wrapper = document.createElement("label");
+        wrapper.className = "field";
+        wrapper.append(labelText(props, id));
+        const input = document.createElement("input");
+        input.type = type === "DatePicker" ? "date" : type === "Slider" ? "range" : "text";
+        if (props.min != null) input.min = props.min;
+        if (props.max != null) input.max = props.max;
+        if (props.step != null) input.step = props.step;
+        input.value = valueOf(props.value || props.text, base) ?? "";
+        input.addEventListener("change", () => {
+          const value = input.type === "range" ? Number(input.value) : input.value;
+          if (path?.startsWith("/")) setPath(path, value);
+          else setRelativePath(base, path, value);
+          sendAction("state_changed", { componentId: id, path }, { type: "change", componentId: id }, { path, value });
+        });
+        wrapper.append(input);
+        return wrapper;
+      }
+
+      if (type === "DataTable") {
+        const table = document.createElement("table");
+        const columns = valueOf(props.columns, base) || [];
+        const rows = valueOf(props.rows, base) || [];
+        const thead = document.createElement("thead");
+        const tr = document.createElement("tr");
+        columns.forEach(col => {
+          const th = document.createElement("th");
+          th.textContent = col;
+          tr.append(th);
+        });
+        thead.append(tr);
+        const tbody = document.createElement("tbody");
+        rows.forEach(row => {
+          const tr = document.createElement("tr");
+          row.forEach(cell => {
+            const td = document.createElement("td");
+            td.textContent = cell;
+            tr.append(td);
+          });
+          tbody.append(tr);
+        });
+        table.append(thead, tbody);
+        return table;
+      }
+
+      const fallback = document.createElement("pre");
+      fallback.textContent = JSON.stringify(def, null, 2);
+      return fallback;
+    }
+
+    function applyMessages(messages) {
+      for (const msg of messages) {
+        if (msg.beginRendering) {
+          app.surfaceId = msg.beginRendering.surfaceId || app.surfaceId;
+          app.rootId = msg.beginRendering.root || "root";
+        }
+        if (msg.surfaceUpdate) {
+          app.surfaceId = msg.surfaceUpdate.surfaceId || app.surfaceId;
+          app.components = new Map((msg.surfaceUpdate.components || []).map(c => [c.id, c]));
+        }
+        if (msg.dataModelUpdate) {
+          app.surfaceId = msg.dataModelUpdate.surfaceId || app.surfaceId;
+          app.dataModel = msg.dataModelUpdate.dataModel || app.dataModel;
+        }
+      }
+      surfaceEl.replaceChildren(renderNode(app.rootId));
+    }
+
+    document.getElementById("reset").addEventListener("click", () => {
+      app.surfaceId = "";
+      app.rootId = "root";
+      app.components = new Map();
+      app.dataModel = {};
+      surfaceEl.innerHTML = '<div class="empty">Generate a UI to start.</div>';
+      log("ready");
+    });
+
+    generateBtn.addEventListener("click", async () => {
+      setLoading(true);
+      try {
+        const res = await fetch("/api/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt: promptEl.value }),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        const messages = await res.json();
+        log(messages);
+        applyMessages(messages);
+      } catch (err) {
+        log(String(err));
+      } finally {
+        setLoading(false);
+      }
+    });
+  </script>
+</body>
+</html>
+"""
 
 A2UI_KEYS = {
     "beginRendering",
@@ -58,6 +397,11 @@ class ActionRequest(BaseModel):
     event: dict = Field(default_factory=dict)
     stateChange: dict = Field(default_factory=dict)
     surfaceId: str = ""
+
+
+@app.get("/", response_class=HTMLResponse)
+def interactive_page():
+    return HTMLResponse(INTERACTIVE_HTML)
 
 
 def json_response(data: Any, status_code: int = 200) -> Response:
