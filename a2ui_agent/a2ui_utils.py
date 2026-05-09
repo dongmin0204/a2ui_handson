@@ -160,6 +160,15 @@ def _parse_json_or_consecutive_objects(json_text: str):
         parsed, _ = decoder.raw_decode(json_text)
         return parsed
     except json.JSONDecodeError as e:
+        repaired = _repair_json_mismatched_closers(json_text)
+        if repaired != json_text:
+            try:
+                parsed, _ = decoder.raw_decode(repaired)
+                logger.info("Repaired mismatched A2UI JSON closers before parsing")
+                return parsed
+            except json.JSONDecodeError:
+                pass
+
         repaired = _repair_json_extra_closing_braces(json_text, e)
         if repaired != json_text:
             try:
@@ -188,6 +197,41 @@ def _parse_json_or_consecutive_objects(json_text: str):
             return None
 
     return objects if objects else None
+
+
+def _repair_json_mismatched_closers(json_text: str) -> str:
+    chars = list(json_text)
+    stack: list[str] = []
+    in_string = False
+    escaped = False
+
+    for i, ch in enumerate(chars):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+
+        if ch == '"':
+            in_string = True
+        elif ch in ("[", "{"):
+            stack.append(ch)
+        elif ch in ("]", "}"):
+            if not stack:
+                continue
+
+            expected = "]" if stack[-1] == "[" else "}"
+            if ch == expected:
+                stack.pop()
+            else:
+                chars[i] = expected
+                stack.pop()
+
+    chars.extend("]" if ch == "[" else "}" for ch in reversed(stack))
+    return "".join(chars)
 
 
 def _repair_json_extra_closing_braces(json_text: str, error: json.JSONDecodeError) -> str:
