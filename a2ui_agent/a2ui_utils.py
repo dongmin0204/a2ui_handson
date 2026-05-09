@@ -52,6 +52,7 @@ def _wrap_a2ui_part(a2ui_message: dict) -> types.Part:
     blob_data = (
         b"<a2a_datapart_json>"
         + json.dumps({
+            "kind": "data",
             "data": a2ui_message,
             "metadata": {"mimeType": A2UI_MIME_TYPE},
         }).encode("utf-8")
