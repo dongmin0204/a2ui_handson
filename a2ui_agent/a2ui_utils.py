@@ -38,6 +38,13 @@ def _wrap_a2ui_part(a2ui_message: dict) -> types.Part:
     )
 
 
+def _make_empty_partial() -> LlmResponse:
+    return LlmResponse(
+        content=types.Content(role="model", parts=[types.Part(text="")]),
+        partial=True,
+    )
+
+
 def _strip_markdown_fence(text: str) -> str:
     text = text.strip()
 
@@ -220,7 +227,7 @@ def a2ui_callback(
         return None
 
     if llm_response.partial:
-        return None
+        return _make_empty_partial()
 
     full_text = "".join(
         part.text or ""
