@@ -475,29 +475,29 @@ def _normalize_component(component_entry: dict) -> None:
         del component["DatePicker"]
 
 
-def _escape_non_ascii_literal_strings(value) -> None:
+def _decode_html_entities_in_literal_strings(value) -> None:
+    """Decode any HTML character references (&#NNN;) the LLM may have generated."""
+    import html as _html
+
     if isinstance(value, list):
         for item in value:
-            _escape_non_ascii_literal_strings(item)
+            _decode_html_entities_in_literal_strings(item)
         return
 
     if not isinstance(value, dict):
         return
 
     literal = value.get("literalString")
-    if isinstance(literal, str):
-        value["literalString"] = literal.encode(
-            "ascii",
-            "xmlcharrefreplace",
-        ).decode("ascii")
+    if isinstance(literal, str) and "&#" in literal:
+        value["literalString"] = _html.unescape(literal)
 
     for child in value.values():
-        _escape_non_ascii_literal_strings(child)
+        _decode_html_entities_in_literal_strings(child)
 
 
 def _normalize_a2ui_messages(messages: list[dict]) -> list[dict]:
     for msg in messages:
-        _escape_non_ascii_literal_strings(msg)
+        _decode_html_entities_in_literal_strings(msg)
 
         surface_update = msg.get("surfaceUpdate")
         if not isinstance(surface_update, dict):

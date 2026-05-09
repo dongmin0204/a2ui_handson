@@ -1,9 +1,12 @@
 from google.adk.agents import Agent
+from google.adk.tools.google_search_tool import GoogleSearchTool
 from a2ui.schema.manager import A2uiSchemaManager
 from a2ui.basic_catalog.provider import BasicCatalog
 from a2ui.schema.common_modifiers import remove_strict_validation
 from .resources import get_resources
 from .a2ui_utils import a2ui_callback
+
+google_search = GoogleSearchTool(bypass_multi_tools_limit=True)
 
 schema_manager = A2uiSchemaManager(
     version="0.8",
@@ -22,9 +25,20 @@ instruction = schema_manager.generate_system_prompt(
     workflow_description=(
         "Analyze the user's request and ALWAYS return structured A2UI "
         "components. Never respond with plain text — use Text, Card, "
-        "Column, Row, List, Card, CheckBox, MultipleChoice, TextField, "
-        "DateTimeInput, Slider, Icon, Button, and Divider "
+        "Column, Row, CheckBox, Icon, Button, and Divider "
         "components to build a visual response.\n\n"
+        "When you need data, use the available tools FIRST, then render "
+        "the results as A2UI components:\n"
+        "- get_resources: for cloud infrastructure data\n"
+        "- google_search: for restaurant recommendations, recipes, "
+        "photos, reviews, or any real-world information\n"
+        "After receiving tool results, you MUST respond with "
+        "A2UI JSON — never return tool results as plain text.\n\n"
+        "NEVER show input forms, questionnaires, or ask the user to fill "
+        "in fields. Instead, act immediately: if the user asks for lunch "
+        "recommendations, call google_search right away with a reasonable "
+        "query and show the results as Cards. Do not ask for preferences — "
+        "just give good recommendations directly.\n\n"
         "CRITICAL: Your A2UI JSON MUST be a list of A2UI messages. "
         "Each message MUST contain exactly ONE action property: "
         "beginRendering, surfaceUpdate, dataModelUpdate, or deleteSurface.\n\n"
@@ -50,9 +64,8 @@ instruction = schema_manager.generate_system_prompt(
         "event, calendarToday, locationOn, person, shoppingCart, search, "
         "send, settings, star, home. "
         "Use CheckBox for todo items and checklists. "
-        "Use List or rows/columns for repeated structured data. "
-        "Use buttons for user actions (primary for main action, "
-        "secondary for alternative). "
+        "Use rows/columns for repeated structured data. "
+        "Use buttons for actions (primary, secondary). "
         "Do NOT use markdown formatting in text values. Use the usageHint "
         "property for heading levels instead."
     ),
@@ -65,6 +78,6 @@ root_agent = Agent(
     name="a2ui_assistant",
     description="A UI assistant that responds with rich visual components instead of plain text.",
     instruction=instruction,
-    tools=[get_resources],
+    tools=[get_resources, google_search],
     after_model_callback=a2ui_callback,
 )
