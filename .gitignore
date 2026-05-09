@@ -11,3 +11,15 @@ __pycache__/
 # IDE
 .vscode/
 .idea/
+
+# OS
+.DS_Store
+
+# ADK cache
+.adk/
+
+# Claude Code
+.claude/
+
+# Test scripts
+_test_*.py
