@@ -11,7 +11,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from google import genai
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .prompts import SYSTEM_PROMPT, action_prompt
 
@@ -44,6 +44,7 @@ A2UI_KEYS = {
     "dataModelUpdate",
     "deleteSurface",
 }
+A2UI_MIME_TYPE = "application/json+a2ui"
 
 
 class GenerateRequest(BaseModel):
@@ -52,8 +53,10 @@ class GenerateRequest(BaseModel):
 
 class ActionRequest(BaseModel):
     action: str
-    context: dict = {}
-    currentDataModel: dict = {}
+    context: dict = Field(default_factory=dict)
+    currentDataModel: dict = Field(default_factory=dict)
+    event: dict = Field(default_factory=dict)
+    stateChange: dict = Field(default_factory=dict)
     surfaceId: str = ""
 
 
@@ -163,10 +166,55 @@ def _is_a2ui_message(value: Any) -> bool:
     return isinstance(value, dict) and any(key in value for key in A2UI_KEYS)
 
 
-def normalize_a2ui_messages(parsed: Any) -> list[dict]:
+def _unwrap_a2ui_envelope(value: Any) -> Any:
+    """
+    A2A DataPart envelope나 data wrapper를 A2UI message로 정규화한다.
+    """
+
+    if isinstance(value, list):
+        return [_unwrap_a2ui_envelope(item) for item in value]
+
+    if not isinstance(value, dict):
+        return value
+
+    if (
+        value.get("kind") == "data"
+        and isinstance(value.get("metadata"), dict)
+        and value["metadata"].get("mimeType") == A2UI_MIME_TYPE
+        and "data" in value
+    ):
+        return _unwrap_a2ui_envelope(value["data"])
+
+    if value.get("kind") == "data" and "data" in value:
+        return _unwrap_a2ui_envelope(value["data"])
+
+    if isinstance(value.get("data"), dict) and _is_a2ui_message(value["data"]):
+        return _unwrap_a2ui_envelope(value["data"])
+
+    return value
+
+
+def _data_model_update_message(parsed: dict, surface_id: str = "") -> dict | None:
+    if not isinstance(parsed.get("dataModel"), dict):
+        return None
+
+    data_model_update: dict[str, Any] = {
+        "dataModel": parsed["dataModel"],
+    }
+
+    if surface_id:
+        data_model_update["surfaceId"] = surface_id
+    elif isinstance(parsed.get("surface"), dict) and parsed["surface"].get("surfaceId"):
+        data_model_update["surfaceId"] = parsed["surface"]["surfaceId"]
+
+    return {"dataModelUpdate": data_model_update}
+
+
+def normalize_a2ui_messages(parsed: Any, surface_id: str = "") -> list[dict]:
     """
     Gemini 출력 형태가 조금 달라도 최종적으로 A2UI message array로 통일.
     """
+    parsed = _unwrap_a2ui_envelope(parsed)
 
     # 이미 A2UI message 하나인 경우
     if _is_a2ui_message(parsed):
@@ -174,37 +222,44 @@ def normalize_a2ui_messages(parsed: Any) -> list[dict]:
 
     # 배열인 경우
     if isinstance(parsed, list):
-        return [
-            item
-            for item in parsed
-            if _is_a2ui_message(item)
-        ]
+        messages: list[dict] = []
+
+        for item in parsed:
+            item = _unwrap_a2ui_envelope(item)
+
+            if _is_a2ui_message(item):
+                messages.append(item)
+                continue
+
+            if isinstance(item, dict):
+                data_model_update = _data_model_update_message(item, surface_id)
+                if data_model_update:
+                    messages.append(data_model_update)
+
+        return messages
 
     # object wrapper인 경우
     if isinstance(parsed, dict):
         # {"messages": [...]}
         if isinstance(parsed.get("messages"), list):
-            return [
-                item
-                for item in parsed["messages"]
-                if _is_a2ui_message(item)
-            ]
+            return normalize_a2ui_messages(parsed["messages"], surface_id)
 
         # {"a2ui": [...]}
         if isinstance(parsed.get("a2ui"), list):
-            return [
-                item
-                for item in parsed["a2ui"]
-                if _is_a2ui_message(item)
-            ]
+            return normalize_a2ui_messages(parsed["a2ui"], surface_id)
 
         # {"data": {"surfaceUpdate": ...}}
         if _is_a2ui_message(parsed.get("data")):
-            return [parsed["data"]]
+            return [_unwrap_a2ui_envelope(parsed["data"])]
 
         # {"kind": "data", "data": {"surfaceUpdate": ...}}
         if parsed.get("kind") == "data" and _is_a2ui_message(parsed.get("data")):
-            return [parsed["data"]]
+            return [_unwrap_a2ui_envelope(parsed["data"])]
+
+        # action 응답 호환: {"dataModel": {...}}
+        data_model_update = _data_model_update_message(parsed, surface_id)
+        if data_model_update:
+            return [data_model_update]
 
     return []
 
@@ -248,7 +303,11 @@ def ensure_begin_rendering(messages: list[dict]) -> list[dict]:
     ]
 
 
-def call_gemini(user_message: str, system_instruction: str = SYSTEM_PROMPT) -> list[dict]:
+def call_gemini(
+    user_message: str,
+    system_instruction: str = SYSTEM_PROMPT,
+    surface_id: str = "",
+) -> list[dict]:
     if not GEMINI_API_KEY or client is None:
         raise ValueError("GEMINI_API_KEY가 설정되지 않았습니다. .env 파일을 확인하세요.")
 
@@ -269,7 +328,7 @@ def call_gemini(user_message: str, system_instruction: str = SYSTEM_PROMPT) -> l
 
     parsed = parse_gemini_json(text)
 
-    messages = normalize_a2ui_messages(parsed)
+    messages = normalize_a2ui_messages(parsed, surface_id)
 
     if not messages:
         raise ValueError(
@@ -305,9 +364,11 @@ async def action(req: ActionRequest):
             req.context,
             req.currentDataModel,
             req.surfaceId,
+            req.event,
+            req.stateChange,
         )
 
-        result = call_gemini(prompt)
+        result = call_gemini(prompt, surface_id=req.surfaceId)
         return json_response(result)
     except Exception as e:
         logger.exception("Action failed")

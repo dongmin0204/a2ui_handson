@@ -87,26 +87,43 @@ dataModel에:
 7. JSON만 반환, 설명 텍스트나 코드블록 마커(```) 포함 금지"""
 
 
-def action_prompt(action: str, context: dict, current_data_model: dict, surface_id: str) -> str:
+def action_prompt(
+    action: str,
+    context: dict,
+    current_data_model: dict,
+    surface_id: str,
+    event: dict | None = None,
+    state_change: dict | None = None,
+) -> str:
     return f"""당신은 A2UI Action을 처리하는 전문가입니다.
 
 Surface ID: {surface_id}
 Action: {action}
 Context: {json.dumps(context or {}, ensure_ascii=False, indent=2)}
+Event:
+{json.dumps(event or {}, ensure_ascii=False, indent=2)}
+State Change:
+{json.dumps(state_change or {}, ensure_ascii=False, indent=2)}
 
 현재 dataModel:
 {json.dumps(current_data_model, ensure_ascii=False, indent=2)}
 
-위 action에 맞게 dataModel을 업데이트하여 반환하세요.
+위 action/event/state change에 맞게 dataModel을 업데이트하여 반환하세요.
 
 Action 처리 가이드:
 - complete_task / mark_done: checked 또는 done이 true인 항목을 처리 (completedAt 추가 또는 목록 갱신)
 - regenerate_plan / reshuffle: 합리적인 새 계획/순서로 데이터 재구성
 - add_item: 새 항목을 적절한 배열에 추가
 - delete_item: 해당 항목 제거
+- state_changed / input_changed / checkbox_changed: State Change 값을 current dataModel에 반영
 - 기타: action 이름의 의미에 맞게 합리적으로 데이터 변경
 
 반드시 다음 JSON 형식만 반환 (설명 없이):
-{{
-  "dataModel": {{ ...업데이트된 전체 dataModel... }}
-}}"""
+[
+  {{
+    "dataModelUpdate": {{
+      "surfaceId": "{surface_id}",
+      "dataModel": {{ ...업데이트된 전체 dataModel... }}
+    }}
+  }}
+]"""

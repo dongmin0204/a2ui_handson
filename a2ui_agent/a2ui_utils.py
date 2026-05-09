@@ -98,6 +98,46 @@ def _parse_json_or_consecutive_objects(json_text: str):
     return objects if objects else None
 
 
+def _unwrap_a2ui_envelope(value):
+    """
+    A2A DataPart envelope 형태를 A2UI message로 벗겨냄.
+
+    {
+      "kind": "data",
+      "metadata": {"mimeType": "application/json+a2ui"},
+      "data": {"surfaceUpdate": {...}}
+    }
+
+    ->
+
+    {"surfaceUpdate": {...}}
+    """
+
+    if isinstance(value, list):
+        return [_unwrap_a2ui_envelope(item) for item in value]
+
+    if not isinstance(value, dict):
+        return value
+
+    if (
+        value.get("kind") == "data"
+        and isinstance(value.get("metadata"), dict)
+        and value["metadata"].get("mimeType") == A2UI_MIME_TYPE
+        and "data" in value
+    ):
+        return _unwrap_a2ui_envelope(value["data"])
+
+    if value.get("kind") == "data" and "data" in value:
+        return _unwrap_a2ui_envelope(value["data"])
+
+    if isinstance(value.get("data"), dict) and any(
+        key in value["data"] for key in A2UI_KEYS
+    ):
+        return _unwrap_a2ui_envelope(value["data"])
+
+    return value
+
+
 def _extract_a2ui_messages(text: str) -> list[dict]:
     text = _strip_markdown_fence(text)
 
@@ -116,17 +156,24 @@ def _extract_a2ui_messages(text: str) -> list[dict]:
     if parsed is None:
         return []
 
+    parsed = _unwrap_a2ui_envelope(parsed)
+
     if isinstance(parsed, dict):
         parsed = [parsed]
 
     if not isinstance(parsed, list):
         return []
 
-    return [
-        msg
-        for msg in parsed
-        if isinstance(msg, dict) and any(key in msg for key in A2UI_KEYS)
-    ]
+    messages: list[dict] = []
+
+    for msg in parsed:
+        msg = _unwrap_a2ui_envelope(msg)
+
+        if isinstance(msg, dict) and any(key in msg for key in A2UI_KEYS):
+            messages.append(msg)
+
+    return messages
+
 
 
 def _ensure_begin_rendering(messages: list[dict]) -> list[dict]:
