@@ -15,13 +15,15 @@ A2A_DATAPART_RE = re.compile(
 )
 
 
-def _wrap_a2ui_part(a2ui_message: dict) -> types.Part:
-    payload = {
+def _a2ui_envelope(a2ui_message: dict) -> dict:
+    return {
         "kind": "data",
         "metadata": {"mimeType": A2UI_MIME_TYPE},
         "data": a2ui_message,
     }
 
+
+def _wrap_a2ui_payload(payload: dict) -> types.Part:
     datapart_json = json.dumps(
         payload,
         ensure_ascii=True,
@@ -40,6 +42,23 @@ def _wrap_a2ui_part(a2ui_message: dict) -> types.Part:
             mime_type="text/plain",
         )
     )
+
+
+def _wrap_a2ui_part(a2ui_message: dict) -> types.Part:
+    return _wrap_a2ui_payload(_a2ui_envelope(a2ui_message))
+
+
+def _wrap_a2ui_parts(a2ui_messages: list[dict]) -> types.Part:
+    # ADK Web combines A2UI parts into one envelope whose data is a list of
+    # A2A DataPart envelopes. Returning that shape directly avoids final
+    # response paths that display individual inline_data parts as files.
+    payload = {
+        "kind": "data",
+        "metadata": {"mimeType": A2UI_MIME_TYPE},
+        "data": [_a2ui_envelope(msg) for msg in a2ui_messages],
+    }
+
+    return _wrap_a2ui_payload(payload)
 
 
 def _make_empty_partial() -> LlmResponse:
@@ -361,7 +380,7 @@ def a2ui_callback(
     return LlmResponse(
         content=types.Content(
             role="model",
-            parts=[_wrap_a2ui_part(msg) for msg in messages],
+            parts=[_wrap_a2ui_parts(messages)],
         ),
         partial=False,
         custom_metadata={"a2a:response": "true"},
