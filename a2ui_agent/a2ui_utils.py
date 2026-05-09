@@ -12,13 +12,19 @@ A2UI_KEYS = {"beginRendering", "surfaceUpdate", "dataModelUpdate", "deleteSurfac
 
 
 def _wrap_a2ui_part(a2ui_message: dict) -> types.Part:
+    payload = {
+        "kind": "data",
+        "metadata": {"mimeType": A2UI_MIME_TYPE},
+        "data": a2ui_message,
+    }
+
+    # 중요:
+    # ensure_ascii=True로 두면 한글이 \uc6b4\ub3d9 형태로 들어가서
+    # 프론트에서 atob()만 써도 mojibake가 덜 발생함.
     datapart_json = json.dumps(
-        {
-            "kind": "data",
-            "metadata": {"mimeType": A2UI_MIME_TYPE},
-            "data": a2ui_message,
-        },
-        ensure_ascii=False,
+        payload,
+        ensure_ascii=True,
+        separators=(",", ":"),
     )
 
     blob_data = (
@@ -30,55 +36,96 @@ def _wrap_a2ui_part(a2ui_message: dict) -> types.Part:
     return types.Part(
         inline_data=types.Blob(
             data=blob_data,
-            mime_type="text/plain",
+            mime_type="text/plain; charset=utf-8",
         )
     )
 
 
-def _extract_a2ui_messages(text: str) -> list[dict]:
+def _strip_markdown_fence(text: str) -> str:
     text = text.strip()
 
-    if not text:
-        return []
+    if not text.startswith("```"):
+        return text
 
-    # markdown fence 제거
-    if text.startswith("```"):
-        text = text.split("\n", 1)[-1]
-        if text.endswith("```"):
-            text = text[:-3].strip()
+    # ```json ... ``` / ``` ... ``` 모두 처리
+    text = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", text)
+    text = re.sub(r"\s*```$", "", text)
 
-    # <a2ui-json> 태그가 있으면 내부만 사용
+    return text.strip()
+
+
+def _extract_json_region(text: str) -> str | None:
+    text = text.strip()
+
+    # <a2ui-json>...</a2ui-json> 우선 처리
     tag_match = re.search(
         r"<a2ui-json>(.*?)</a2ui-json>",
         text,
         flags=re.DOTALL,
     )
     if tag_match:
-        text = tag_match.group(1).strip()
+        return tag_match.group(1).strip()
 
-    # JSON 시작 위치 찾기
-    json_start = None
+    # 태그가 없으면 첫 JSON 시작점부터 사용
     for i, ch in enumerate(text):
         if ch in ("[", "{"):
-            json_start = i
+            return text[i:].strip()
+
+    return None
+
+
+def _parse_json_or_consecutive_objects(json_text: str):
+    decoder = json.JSONDecoder()
+
+    # 1차: 정상 JSON
+    try:
+        parsed, _ = decoder.raw_decode(json_text)
+        return parsed
+    except json.JSONDecodeError:
+        pass
+
+    # 2차: {"a":1} {"b":2} 같은 연속 JSON 객체 처리
+    objects = []
+    pos = 0
+
+    while pos < len(json_text):
+        while pos < len(json_text) and json_text[pos].isspace():
+            pos += 1
+
+        if pos >= len(json_text):
             break
 
-    if json_start is None:
-        return []
-
-    json_text = text[json_start:].strip()
-
-    # 1차: 정상 JSON 파싱
-    try:
-        parsed, _ = json.JSONDecoder().raw_decode(json_text)
-    except json.JSONDecodeError:
-        # 2차: 연속 JSON 객체 보정
         try:
-            fixed = "[" + re.sub(r"}\s*{", "},{", json_text) + "]"
-            parsed, _ = json.JSONDecoder().raw_decode(fixed)
+            obj, end = decoder.raw_decode(json_text, pos)
+            objects.append(obj)
+            pos = end
         except json.JSONDecodeError as e:
             logger.warning("Failed to parse A2UI JSON: %s", e)
-            return []
+            return None
+
+    if objects:
+        return objects
+
+    return None
+
+
+def _extract_a2ui_messages(text: str) -> list[dict]:
+    text = _strip_markdown_fence(text)
+
+    if not text:
+        return []
+
+    json_text = _extract_json_region(text)
+
+    if not json_text:
+        return []
+
+    json_text = _strip_markdown_fence(json_text)
+
+    parsed = _parse_json_or_consecutive_objects(json_text)
+
+    if parsed is None:
+        return []
 
     if isinstance(parsed, dict):
         parsed = [parsed]
@@ -86,11 +133,16 @@ def _extract_a2ui_messages(text: str) -> list[dict]:
     if not isinstance(parsed, list):
         return []
 
-    return [
-        msg
-        for msg in parsed
-        if isinstance(msg, dict) and any(k in msg for k in A2UI_KEYS)
-    ]
+    messages: list[dict] = []
+
+    for msg in parsed:
+        if not isinstance(msg, dict):
+            continue
+
+        if any(key in msg for key in A2UI_KEYS):
+            messages.append(msg)
+
+    return messages
 
 
 def a2ui_callback(
@@ -100,13 +152,16 @@ def a2ui_callback(
     if not llm_response.content or not llm_response.content.parts:
         return None
 
-    # 일단 partial은 건드리지 않는 쪽이 디버깅에 안전
+    # streaming 중간 조각은 건드리지 않음
     if llm_response.partial:
         return None
 
     full_text = "".join(
-        part.text for part in llm_response.content.parts if part.text
+        part.text or ""
+        for part in llm_response.content.parts
     )
+
+    logger.info("LLM full_text repr: %r", full_text[:500])
 
     messages = _extract_a2ui_messages(full_text)
 
@@ -115,10 +170,12 @@ def a2ui_callback(
 
     logger.info("Extracted %d A2UI messages", len(messages))
 
+    new_parts = [_wrap_a2ui_part(msg) for msg in messages]
+
     return LlmResponse(
         content=types.Content(
             role="model",
-            parts=[_wrap_a2ui_part(msg) for msg in messages],
+            parts=new_parts,
         ),
         partial=False,
         custom_metadata={"a2a:response": "true"},
