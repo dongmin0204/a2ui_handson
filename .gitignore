@@ -4,6 +4,13 @@ __pycache__/
 *.pyo
 .venv/
 *.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
 
 # env
 .env
@@ -20,6 +27,10 @@ __pycache__/
 
 # Claude Code
 .claude/
+
+# Node
+node_modules/
+.next/
 
 # Test scripts
 _test_*.py

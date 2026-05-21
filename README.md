@@ -6,6 +6,20 @@
 "내 클라우드 리소스 상태 보여줘"  →  카드, 아이콘, 테이블이 포함된 대시보드 UI
 ```
 
+## 저장소 구조
+
+이 저장소는 난이도별로 `level1`부터 `level4`까지 나뉘며, 각 레벨은 아래 두 트랙을 가진다.
+
+- `handson/`: 실습자가 직접 채우는 시작 코드
+- `solution/`: 해당 단계의 완성 코드
+
+빠른 이동:
+
+- [level1](./level1/README.md)
+- [level2](./level2/README.md)
+- [level3](./level3/README.md)
+- [level4](./level4/README.md)
+
 ---
 
 ## 이 워크샵에서 만드는 것

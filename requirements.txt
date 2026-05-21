@@ -1,2 +1,7 @@
-google-adk
+google-adk>=2.0.0
 a2ui-agent-sdk
+anthropic
+fastapi
+uvicorn[standard]
+python-dotenv
+ag-ui-adk
