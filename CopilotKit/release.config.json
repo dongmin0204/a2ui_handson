@@ -1,0 +1,31 @@
+{
+  "prereleaseTag": "canary",
+  "scopes": {
+    "monorepo": {
+      "packages": [
+        "@copilotkit/a2ui-renderer",
+        "@copilotkit/agentcore-runner",
+        "@copilotkit/core",
+        "@copilotkit/react-core",
+        "@copilotkit/react-native",
+        "@copilotkit/react-textarea",
+        "@copilotkit/react-ui",
+        "@copilotkit/runtime",
+        "@copilotkit/runtime-client-gql",
+        "@copilotkit/sdk-js",
+        "@copilotkit/shared",
+        "@copilotkit/sqlite-runner",
+        "@copilotkit/voice",
+        "@copilotkit/vue",
+        "@copilotkit/web-inspector"
+      ],
+      "versionSource": "@copilotkit/react-core",
+      "sharedVersion": true
+    },
+    "angular": {
+      "packages": ["@copilotkitnext/angular"],
+      "versionSource": "@copilotkitnext/angular",
+      "sharedVersion": false
+    }
+  }
+}
