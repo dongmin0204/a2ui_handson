@@ -1,6 +1,6 @@
 "use client";
 
-import { ProverbsCard } from "@/components/proverbs";
+import { PlansCard } from "@/components/plans";
 import { StockChart } from "@/components/stock-chart";
 import { WeatherCard } from "@/components/weather";
 import { AgentState } from "@/lib/types";
@@ -17,29 +17,37 @@ export default function CopilotKitPage() {
 }
 
 function YourMainContent() {
-  // 🪁 Shared State: https://docs.copilotkit.ai/adk/shared-state
+  // Shared State: https://docs.copilotkit.ai/adk/shared-state
   const { state, setState } = useCoAgent<AgentState>({
     name: "my_agent",
     initialState: {
-      proverbs: [
-        "CopilotKit may be new, but its the best thing since sliced bread.",
+      plans: [
+        "오늘 데모 화면 문구를 한국어로 다듬기",
       ],
       themeColor: "#6366f1",
+      textColor: "#ffffff",
     },
   });
   const themeColor = state.themeColor || "#6366f1";
+  const textColor = state.textColor || "#ffffff";
 
-  //🪁 Generative UI: https://docs.copilotkit.ai/adk/generative-ui
+  //Generative UI: https://docs.copilotkit.ai/adk/generative-ui
   useRenderToolCall(
     {
       name: "get_weather",
       description: "Get the weather for a given location.",
       parameters: [{ name: "location", type: "string", required: true }],
       render: ({ args, result }) => {
-        return <WeatherCard location={args.location} themeColor={themeColor} />;
+        return (
+          <WeatherCard
+            location={args.location}
+            themeColor={themeColor}
+            textColor={textColor}
+          />
+        );
       },
     },
-    [themeColor],
+    [themeColor, textColor],
   );
 
   useRenderToolCall(
@@ -53,10 +61,16 @@ function YourMainContent() {
           return <></>;
         }
 
-        return <StockChart result={result} themeColor={themeColor} />;
+        return (
+          <StockChart
+            result={result}
+            themeColor={themeColor}
+            textColor={textColor}
+          />
+        );
       },
     },
-    [themeColor],
+    [themeColor, textColor],
   );
 
   return (
@@ -70,42 +84,41 @@ function YourMainContent() {
         clickOutsideToClose={false}
         defaultOpen={true}
         labels={{
-          title: "Popup Assistant",
-          initial: "👋 Hi, there! You're chatting with an agent.",
+          title: "AI 도우미",
+          initial: "안녕하세요. 오늘의 계획, 날씨, 주식 차트를 도와드릴게요.",
         }}
         suggestions={[
           {
-            title: "Generative UI",
-            message: "Get the weather in San Francisco.",
+            title: "날씨 카드",
+            message: "서울 날씨 보여줘.",
           },
           {
-            title: "Market Chart",
-            message: "Use Google Search to show me a 5 day chart for Nvidia stock.",
+            title: "주식 차트",
+            message: "구글 검색으로 엔비디아 5일 차트 보여줘.",
           },
           {
-            title: "Theme Color",
-            message: "Set the theme to green.",
+            title: "테마 변경",
+            message: "테마를 초록색으로 바꿔줘.",
           },
           {
-            title: "Write Agent State",
-            message: "Add a proverb about AI.",
+            title: "계획 추가",
+            message: "오늘 할 계획 하나 추가해줘.",
           },
           {
-            title: "Update Agent State",
-            message:
-              "Please remove 1 random proverb from the list if there are any.",
+            title: "계획 수정",
+            message: "계획이 있으면 하나만 지워줘.",
           },
           {
-            title: "Read Agent State",
-            message: "What are the proverbs?",
+            title: "계획 읽기",
+            message: "지금 계획 목록 알려줘.",
           },
         ]}
       >
         <div
-          style={{ backgroundColor: themeColor }}
-          className="h-screen flex justify-center items-center flex-col transition-colors duration-300"
+          style={{ backgroundColor: themeColor, color: textColor }}
+          className="hero-shell h-screen flex justify-center items-center flex-col transition-colors duration-500"
         >
-          <ProverbsCard state={state} setState={setState} />
+          <PlansCard state={state} setState={setState} />
         </div>
       </CopilotSidebar>
     </main>

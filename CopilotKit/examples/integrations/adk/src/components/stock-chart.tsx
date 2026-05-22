@@ -52,9 +52,11 @@ function buildLinePath(points: StockChartPoint[]) {
 export function StockChart({
   result,
   themeColor,
+  textColor,
 }: {
   result: StockChartResult;
   themeColor: string;
+  textColor: string;
 }) {
   const latestPrice = result.points[result.points.length - 1]?.price;
   const earliestPrice = result.points[0]?.price;
@@ -63,29 +65,32 @@ export function StockChart({
   const linePath = buildLinePath(result.points);
 
   return (
-    <div className="mt-6 mb-4 w-full max-w-3xl rounded-3xl bg-slate-950/85 p-6 text-white shadow-2xl">
+    <div
+      className="stage-enter mt-6 mb-4 w-full max-w-3xl rounded-3xl bg-slate-950/85 p-6 shadow-2xl"
+      style={{ color: textColor }}
+    >
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="text-sm uppercase tracking-[0.25em] text-white/55">
-            Google-grounded market snapshot
+          <p className="text-sm uppercase tracking-[0.25em] opacity-55">
+            GOOGLE GROUNDED MARKET SNAPSHOT
           </p>
           <h3 className="mt-2 text-3xl font-semibold">
-            {result.company_name} <span className="text-white/50">({result.symbol})</span>
+            {result.company_name} <span className="opacity-50">({result.symbol})</span>
           </h3>
-          <p className="mt-2 text-sm text-white/65">
+          <p className="mt-2 text-sm opacity-65">
             {result.exchange} · {result.timeframe}
           </p>
         </div>
         <div className="text-right">
           <div className="text-3xl font-semibold">
-            {latestPrice != null ? formatPrice(latestPrice, result.currency) : "N/A"}
+            {latestPrice != null ? formatPrice(latestPrice, result.currency) : "정보 없음"}
           </div>
           <div
             className="mt-2 text-sm font-medium"
             style={{ color: up ? "#86efac" : "#fda4af" }}
           >
             {up ? "+" : ""}
-            {change.toFixed(2)} over {result.timeframe}
+            {change.toFixed(2)} / {result.timeframe}
           </div>
         </div>
       </div>
@@ -135,7 +140,9 @@ export function StockChart({
                   x={x}
                   y="174"
                   textAnchor="middle"
-                  className="fill-white/65 text-[10px]"
+                  className="text-[10px]"
+                  fill={textColor}
+                  opacity="0.65"
                 >
                   {point.label}
                 </text>
@@ -145,7 +152,7 @@ export function StockChart({
         </svg>
       </div>
 
-      <p className="mt-4 text-sm leading-6 text-white/78">{result.market_summary}</p>
+      <p className="mt-4 text-sm leading-6 opacity-80">{result.market_summary}</p>
 
       {result.sources && result.sources.length > 0 ? (
         <div className="mt-4 flex flex-wrap gap-2">
@@ -155,7 +162,11 @@ export function StockChart({
               href={source.url}
               target="_blank"
               rel="noreferrer"
-              className="rounded-full border border-white/12 px-3 py-1 text-xs text-white/75 transition hover:border-white/30 hover:text-white"
+              className="rounded-full px-3 py-1 text-xs transition"
+              style={{
+                border: `1px solid ${textColor}22`,
+                color: textColor,
+              }}
             >
               {source.title}
             </a>
