@@ -237,9 +237,9 @@ plans_agent = LlmAgent(
         5. After using the tool, provide a brief summary of what you added, removed, or changed.
 
         Examples of when to use the set_plans tool:
-        - "오늘 할 일 추가해줘" → Add a concrete plan item and send the full updated list.
-        - "첫 번째 계획 지워줘" → Remove it and send the full remaining list.
-        - "회의 준비를 제일 위로 올려줘" → Reorder the list and send the full updated list.
+        - "오늘 할 일 추가해줘" -> Add a concrete plan item and send the full updated list.
+        - "첫 번째 계획 지워줘" -> Remove it and send the full remaining list.
+        - "회의 준비를 제일 위로 올려줘" -> Reorder the list and send the full updated list.
 
 
         IMPORTANT RULES ABOUT WEATHER AND THE GET_WEATHER TOOL:
