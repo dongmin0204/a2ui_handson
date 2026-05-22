@@ -47,4 +47,7 @@ echo " - 구글 검색으로 엔비디아 5일 차트 보여줘."
 echo ""
 
 cd "$APP_DIR"
+if [ ! -d "node_modules" ]; then
+  npm install
+fi
 npm run dev
