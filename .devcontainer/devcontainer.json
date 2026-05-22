@@ -2,10 +2,14 @@
   "name": "ADK + A2UI Hands-on",
   "image": "mcr.microsoft.com/devcontainers/python:3.12",
   "postCreateCommand": "pip install -r requirements.txt",
-  "forwardPorts": [8080],
+  "forwardPorts": [8000, 3000],
   "portsAttributes": {
-    "8080": {
+    "8000": {
       "label": "ADK Web UI",
+      "onAutoForward": "openBrowser"
+    },
+    "3000": {
+      "label": "A2UI Web UI",
       "onAutoForward": "openBrowser"
     }
   },
