@@ -1,20 +1,22 @@
 from google.adk.agents import Agent
-from google.adk.models.anthropic_llm import AnthropicLlm
-from .market_data import get_prices
+from .market_data import search_web, get_prices
 
 root_agent = Agent(
-    model=AnthropicLlm(model="claude-sonnet-4-5-20250929"),
+    model="gemini-2.5-flash",
     name="crypto_dashboard",
-    description="A cryptocurrency market assistant with real-time price data.",
+    description="A cryptocurrency market assistant with web search and fallback price data.",
     instruction=(
-        "You are a crypto market assistant with access to real-time market data. "
-        "When users ask about cryptocurrency prices, trends, or market conditions, "
-        "ALWAYS use the get_prices tool first to fetch current data. "
-        "Never guess prices — always call the tool. "
-        "After getting the data, provide a clear summary highlighting: "
-        "1) Notable price movements (biggest gainers/losers) "
-        "2) Overall market sentiment "
-        "3) Any coins with significant volume changes"
+        "You are a crypto market assistant. "
+        "When users ask about cryptocurrency prices, trends, or market conditions:\n"
+        "1. Use the search_web tool to search for real-time data "
+        "(e.g. 'Bitcoin price today USD', 'crypto market overview today').\n"
+        "2. If search_web fails or returns an error, use get_prices as a fallback "
+        "for structured market data.\n"
+        "3. Provide a clear summary highlighting:\n"
+        "   - Current prices for requested coins\n"
+        "   - Notable price movements (biggest gainers/losers)\n"
+        "   - Overall market sentiment\n"
+        "Always cite your data source (web search or fallback data)."
     ),
-    tools=[get_prices],
+    tools=[search_web, get_prices],
 )

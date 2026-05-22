@@ -1,6 +1,7 @@
 import json
-import urllib.request
-import urllib.error
+import os
+from google import genai
+from google.genai import types
 
 MOCK_MARKET = [
     {
@@ -55,50 +56,39 @@ MOCK_MARKET = [
     },
 ]
 
-COIN_IDS = "bitcoin,ethereum,solana,ripple,cardano"
-SYMBOL_MAP = {
-    "bitcoin": "BTC",
-    "ethereum": "ETH",
-    "solana": "SOL",
-    "ripple": "XRP",
-    "cardano": "ADA",
-}
+
+def search_web(query: str) -> str:
+    """Search the web via Gemini with Google Search grounding.
+
+    Args:
+        query: The search query (e.g. "Bitcoin price today USD")
+
+    Returns:
+        A string with search-grounded answer from Gemini.
+        The agent should use this to answer the user's question.
+    """
+    api_key = os.environ.get("GOOGLE_API_KEY", "")
+    if not api_key:
+        return json.dumps({"error": "GOOGLE_API_KEY not set", "fallback": "Use get_prices instead"})
+
+    try:
+        client = genai.Client(api_key=api_key)
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=query,
+            config=types.GenerateContentConfig(
+                tools=[types.Tool(google_search=types.GoogleSearch())],
+            ),
+        )
+        return response.text
+    except Exception as e:
+        return json.dumps({"error": str(e)})
 
 
 def get_prices() -> list[dict]:
-    """Get current cryptocurrency market data for top 5 coins.
+    """Get cryptocurrency market data for top 5 coins (static fallback).
 
-    Returns a list of coins, each with:
-    - symbol: ticker (BTC, ETH, etc.)
-    - name: full name
-    - price_usd: current price in USD
-    - change_24h_pct: 24-hour price change percentage
-    - market_cap_usd: market capitalization in USD
-    - volume_24h_usd: 24-hour trading volume in USD
-    - high_24h / low_24h: 24-hour price range
-
-    Fetches live data from CoinGecko API. Falls back to mock data on failure.
+    Returns a list of coins with price, change, market cap, volume, and range.
+    Use this when search_web is unavailable.
     """
-    try:
-        url = (
-            "https://api.coingecko.com/api/v3/coins/markets"
-            f"?vs_currency=usd&ids={COIN_IDS}&order=market_cap_desc"
-        )
-        req = urllib.request.Request(url, headers={"Accept": "application/json"})
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read())
-        return [
-            {
-                "symbol": SYMBOL_MAP.get(c["id"], c["symbol"].upper()),
-                "name": c["name"],
-                "price_usd": c["current_price"],
-                "change_24h_pct": round(c.get("price_change_percentage_24h") or 0, 2),
-                "market_cap_usd": c.get("market_cap", 0),
-                "volume_24h_usd": c.get("total_volume", 0),
-                "high_24h": c.get("high_24h", 0),
-                "low_24h": c.get("low_24h", 0),
-            }
-            for c in data
-        ]
-    except (urllib.error.URLError, json.JSONDecodeError, KeyError):
-        return MOCK_MARKET
+    return MOCK_MARKET
