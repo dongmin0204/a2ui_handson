@@ -47,6 +47,14 @@ echo " - 구글 검색으로 엔비디아 5일 차트 보여줘."
 echo ""
 
 cd "$APP_DIR"
+if ! command -v npm >/dev/null 2>&1; then
+  NVM_SH="${NVM_DIR:-/usr/local/share/nvm}/nvm.sh"
+  if [ -s "$NVM_SH" ]; then
+    . "$NVM_SH"
+    nvm use default >/dev/null
+  fi
+fi
+
 if [ ! -d "node_modules" ]; then
   npm install
 fi
